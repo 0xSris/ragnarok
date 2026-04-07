@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  # ── Ollama LLM server ────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ragnarok_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: ragnarok_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./backend:/app/backend
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - CHROMA_DIR=/app/data/chroma
+      - DB_PATH=/app/data/ragnarok.db
+      - UPLOADS_DIR=/app/data/uploads
+    depends_on:
+      ollama:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+
+  # ── Vite frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: ragnarok_frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
