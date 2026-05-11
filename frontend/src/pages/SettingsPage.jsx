@@ -1,134 +1,64 @@
-import { useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Settings, Sun, Moon, Cpu, Database, Shield, Info, Save } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { useStore } from '../store'
-import { checkHealth, listModels } from '../utils/api'
+import { Save } from 'lucide-react'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
+import { getSystemStatus, listModels, updateRetrievalSettings } from '../utils/api'
 
 export default function SettingsPage() {
-  const { darkMode, toggleDarkMode, activeModel, setActiveModel, user } = useStore()
-  const [chunkSize, setChunkSize] = useState(512)
-  const [topK, setTopK] = useState(10)
-  const [temperature, setTemperature] = useState(0.1)
-
-  const { data: healthData } = useQuery({ queryKey: ['health'], queryFn: checkHealth })
+  const { data: status } = useQuery({ queryKey: ['system-status'], queryFn: getSystemStatus, refetchInterval: 10000 })
   const { data: modelsData } = useQuery({ queryKey: ['models'], queryFn: listModels })
-  const models = modelsData?.models || ['llama3']
+  const [settings, setSettings] = useState({
+    selected_llm: 'llama3',
+    top_k: 10,
+    chunk_size: 512,
+    chunk_overlap: 64,
+    reranker_enabled: true,
+    temperature: 0.1,
+    citation_strictness: 'strict',
+  })
+  const models = modelsData?.llm_models || ['llama3', 'mistral', 'phi3']
 
-  const Section = ({ title, icon: Icon, children }) => (
-    <div className="card-cartoon p-5 mb-5">
-      <div className="flex items-center gap-2 mb-4">
-        <Icon size={18} style={{ color: 'var(--accent)' }} />
-        <h3 className="font-display text-lg" style={{ color: 'var(--accent)' }}>{title}</h3>
-      </div>
-      {children}
-    </div>
-  )
-
-  const Row = ({ label, description, children }) => (
-    <div className="flex items-center justify-between py-3 border-b last:border-0"
-      style={{ borderColor: 'var(--border)' }}>
-      <div>
-        <p className="text-sm font-bold">{label}</p>
-        {description && <p className="text-xs opacity-50 mt-0.5">{description}</p>}
-      </div>
-      <div className="shrink-0 ml-4">{children}</div>
-    </div>
-  )
-
-  const Toggle = ({ value, onChange }) => (
-    <div className={`w-11 h-6 rounded-full relative cursor-pointer transition-colors ${value ? 'bg-purple-500' : 'bg-gray-300 dark:bg-gray-600'}`}
-      onClick={onChange}>
-      <div className={`w-4 h-4 rounded-full bg-white absolute top-1 transition-transform shadow ${value ? 'translate-x-6' : 'translate-x-1'}`} />
-    </div>
-  )
+  const update = (key, value) => setSettings((current) => ({ ...current, [key]: value }))
+  const save = async () => {
+    await updateRetrievalSettings(settings)
+    toast.success('Local retrieval settings saved')
+  }
 
   return (
-    <div className="p-6 max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="font-display text-2xl" style={{ color: 'var(--accent)' }}>Settings</h1>
-        <p className="text-sm font-semibold opacity-60 mt-0.5">Configure RAGNAROK to your preferences</p>
+    <div className="space-y-6 p-6">
+      <div>
+        <p className="mono text-xs uppercase tracking-[0.25em] text-cyan-300">local model and retrieval settings</p>
+        <h1 className="mt-2 text-3xl font-black text-white">Settings</h1>
       </div>
-
-      {/* Appearance */}
-      <Section title="Appearance" icon={Sun}>
-        <Row label="Dark Mode" description="Toggle between light and dark theme">
-          <Toggle value={darkMode} onChange={toggleDarkMode} />
-        </Row>
-      </Section>
-
-      {/* LLM */}
-      <Section title="Language Model" icon={Cpu}>
-        <Row label="Default Model" description="Model used for all queries">
-          <select className="rag-input py-1.5 text-sm w-40"
-            value={activeModel} onChange={(e) => setActiveModel(e.target.value)}>
-            {models.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
-        </Row>
-        <Row label="Temperature" description={`Creativity level: ${temperature} (lower = more focused)`}>
-          <div className="flex items-center gap-2">
-            <input type="range" min="0" max="1" step="0.05" value={temperature}
-              onChange={(e) => setTemperature(parseFloat(e.target.value))}
-              className="w-28 accent-purple-500" />
-            <span className="text-xs font-mono w-8 text-right">{temperature}</span>
+      <div className="grid grid-cols-[1fr_420px] gap-5">
+        <section className="panel p-5">
+          <h2 className="mb-4 text-lg font-bold text-white">Prompt and Context Controls</h2>
+          <div className="grid grid-cols-2 gap-4">
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">LLM model</span><select className="field" value={settings.selected_llm} onChange={(event) => update('selected_llm', event.target.value)}>{models.map((model) => <option key={model} value={model}>{model}</option>)}</select></label>
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">citation strictness</span><select className="field" value={settings.citation_strictness} onChange={(event) => update('citation_strictness', event.target.value)}><option>strict</option><option>balanced</option><option>exploratory</option></select></label>
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">top-k {settings.top_k}</span><input type="range" min="3" max="30" value={settings.top_k} onChange={(event) => update('top_k', Number(event.target.value))} /></label>
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">temperature {settings.temperature}</span><input type="range" min="0" max="1" step="0.1" value={settings.temperature} onChange={(event) => update('temperature', Number(event.target.value))} /></label>
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">chunk size</span><input className="field" type="number" value={settings.chunk_size} onChange={(event) => update('chunk_size', Number(event.target.value))} /></label>
+            <label className="space-y-2"><span className="mono text-xs text-slate-500">overlap</span><input className="field" type="number" value={settings.chunk_overlap} onChange={(event) => update('chunk_overlap', Number(event.target.value))} /></label>
           </div>
-        </Row>
-      </Section>
+          <label className="mt-5 flex items-center justify-between rounded-md border border-slate-800 bg-slate-950/50 p-3">
+            <span>Cross-encoder reranker</span>
+            <input type="checkbox" checked={settings.reranker_enabled} onChange={(event) => update('reranker_enabled', event.target.checked)} />
+          </label>
+          <button className="btn-primary mt-5" onClick={save}><Save size={16} /> Save local settings</button>
+        </section>
 
-      {/* Retrieval */}
-      <Section title="Retrieval" icon={Database}>
-        <Row label="Chunk Size" description="Words per chunk (restart to apply)">
-          <div className="flex items-center gap-2">
-            <input type="range" min="128" max="1024" step="64" value={chunkSize}
-              onChange={(e) => setChunkSize(parseInt(e.target.value))}
-              className="w-28 accent-purple-500" />
-            <span className="text-xs font-mono w-12 text-right">{chunkSize}w</span>
+        <aside className="panel p-5">
+          <h2 className="mb-4 text-lg font-bold text-white">System Status</h2>
+          <div className="space-y-3 text-sm">
+            <div className="flex justify-between"><span>Ollama</span><span className={status?.ollama?.available ? 'badge badge-green' : 'badge badge-red'}>{status?.ollama?.available ? 'running' : 'offline'}</span></div>
+            <div className="flex justify-between"><span>Embeddings</span><span className="badge">{status?.embedding_model?.name}</span></div>
+            <div className="flex justify-between"><span>Chroma chunks</span><span className="badge badge-cyan">{status?.chromadb?.chunk_count || 0}</span></div>
+            <div className="flex justify-between"><span>Tesseract</span><span className={status?.tesseract?.available ? 'badge badge-green' : 'badge badge-red'}>{status?.tesseract?.available ? 'available' : 'missing'}</span></div>
+            <div className="flex justify-between"><span>Whisper</span><span className={status?.whisper?.available ? 'badge badge-green' : 'badge badge-red'}>{status?.whisper?.available ? 'available' : 'missing'}</span></div>
           </div>
-        </Row>
-        <Row label="Top-K Results" description="Documents retrieved per query">
-          <div className="flex items-center gap-2">
-            <input type="range" min="3" max="20" step="1" value={topK}
-              onChange={(e) => setTopK(parseInt(e.target.value))}
-              className="w-28 accent-purple-500" />
-            <span className="text-xs font-mono w-6 text-right">{topK}</span>
-          </div>
-        </Row>
-      </Section>
-
-      {/* User */}
-      <Section title="Account" icon={Shield}>
-        <Row label="Username"><span className="text-sm font-bold">{user?.username}</span></Row>
-        <Row label="Role"><span className="tag-pill capitalize">{user?.role}</span></Row>
-      </Section>
-
-      {/* System status */}
-      <Section title="System Status" icon={Info}>
-        <div className="space-y-2">
-          {[
-            { label: 'API Server', ok: !!healthData },
-            { label: 'Vector DB (Chroma)', ok: !!healthData },
-            { label: 'LLM (Ollama)', ok: models.length > 0 },
-          ].map(({ label, ok }) => (
-            <div key={label} className="flex items-center justify-between py-2">
-              <span className="text-sm font-semibold">{label}</span>
-              <span className={`text-xs font-bold px-2 py-1 rounded-full ${ok ? 'bg-green-100 dark:bg-green-900/20 text-green-600' : 'bg-red-100 dark:bg-red-900/20 text-red-500'}`}>
-                {ok ? '● Operational' : '● Offline'}
-              </span>
-            </div>
-          ))}
-        </div>
-        {healthData && (
-          <div className="mt-3 p-3 rounded-xl text-xs font-mono opacity-60"
-            style={{ background: 'var(--bg-secondary)' }}>
-            {JSON.stringify(healthData, null, 2)}
-          </div>
-        )}
-      </Section>
-
-      <p className="text-center text-xs opacity-30 font-semibold">
-        RAGNAROK v1.0.0 · 100% Offline · MIT License
-      </p>
+        </aside>
+      </div>
     </div>
   )
 }

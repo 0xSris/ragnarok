@@ -35,12 +35,18 @@ export const register = (data) =>
   api.post('/auth/register', data).then((r) => r.data)
 export const getMe = () => api.get('/auth/me').then((r) => r.data)
 
+// Command center
+export const getSystemStatus = () =>
+  api.get('/system/status').then((r) => r.data)
+export const getIngestionJobs = () =>
+  api.get('/ingest/jobs').then((r) => r.data)
+
 // ── Documents ──
 export const uploadDocuments = (files, collectionId, tags = '[]') => {
   const form = new FormData()
   files.forEach((f) => form.append('files', f))
   return api
-    .post(`/documents/upload?collection_id=${collectionId}&tags=${tags}`, form, {
+    .post(`/ingest/upload?collection_id=${collectionId || ''}&tags=${tags}`, form, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
     .then((r) => r.data)
@@ -51,6 +57,10 @@ export const deleteDocument = (id) =>
   api.delete(`/documents/${id}`).then((r) => r.data)
 export const getDocument = (id) =>
   api.get(`/documents/${id}`).then((r) => r.data)
+export const getDocumentChunks = (id) =>
+  api.get(`/documents/${id}/chunks`).then((r) => r.data)
+export const reindexDocument = (id) =>
+  api.post(`/documents/${id}/reindex`).then((r) => r.data)
 export const retagDocument = (id, tags) =>
   api.post(`/documents/${id}/retag`, tags).then((r) => r.data)
 
@@ -64,7 +74,7 @@ export const deleteCollection = (id) =>
 
 // ── Query ──
 export const queryKB = (data) =>
-  api.post('/query/', data).then((r) => r.data)
+  api.post('/chat/query', data).then((r) => r.data)
 export const transcribeAudio = (blob) => {
   const form = new FormData()
   form.append('file', blob, 'audio.wav')
@@ -78,6 +88,8 @@ export const transcribeAudio = (blob) => {
 // ── History ──
 export const getHistory = (params) =>
   api.get('/history/', { params }).then((r) => r.data)
+export const getChatHistory = () =>
+  api.get('/chat/history').then((r) => r.data)
 export const deleteHistory = (id) =>
   api.delete(`/history/${id}`).then((r) => r.data)
 export const clearHistory = () =>
@@ -93,7 +105,7 @@ export const listEvals = () =>
 export const getEval = (id) =>
   api.get(`/eval/${id}`).then((r) => r.data)
 export const getEvalDashboard = () =>
-  api.get('/eval/dashboard/stats').then((r) => r.data)
+  api.get('/evals/summary').then((r) => r.data)
 
 // ── Export ──
 export const exportAnswers = (queryIds, format) =>
@@ -101,7 +113,9 @@ export const exportAnswers = (queryIds, format) =>
 
 // ── Models ──
 export const listModels = () =>
-  api.get('/models').then((r) => r.data)
+  api.get('/settings/models').then((r) => r.data)
+export const updateRetrievalSettings = (data) =>
+  api.put('/settings/retrieval', data).then((r) => r.data)
 
 // ── Health ──
 export const checkHealth = () =>
