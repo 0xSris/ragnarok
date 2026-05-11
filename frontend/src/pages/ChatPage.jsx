@@ -1,421 +1,222 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Plus, Trash2, ChevronDown, Cpu, ThumbsUp, ThumbsDown, Copy, Download, Sparkles, Mic, Volume2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { Brain, Clock3, FileSearch, GitCompare, ListChecks, LockKeyhole, Network, Send, ShieldCheck, SlidersHorizontal, Sparkles } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { listCollections, listModels, queryKB } from '../utils/api'
 import { useStore } from '../store'
-import { streamQuery, submitFeedback, listCollections, listModels, transcribeAudio } from '../utils/api'
-import { useQuery } from '@tanstack/react-query'
-import toast from 'react-hot-toast'
-import MascotChat from '../components/mascot/MascotChat'
-import SourcePanel from '../components/chat/SourcePanel'
-import ModelSelector from '../components/chat/ModelSelector'
-import TypingIndicator from '../components/TypingIndicator'
-import clsx from 'clsx'
 
-let msgIdCounter = 0
-const newId = () => `msg-${++msgIdCounter}-${Date.now()}`
-
-const SUGGESTED = [
-  "Summarize all uploaded documents",
-  "What are the key findings in my research files?",
-  "Find all mentions of contracts or agreements",
-  "Compare the main topics across documents",
+const queryModes = ['Ask', 'Summarize', 'Compare documents', 'Extract entities', 'Timeline', 'Contradictions', 'Study notes', 'Search exact sources']
+const modeCards = [
+  { mode: 'Summarize', label: 'Summarize', detail: 'Compress long sources into cited briefs.', icon: Sparkles },
+  { mode: 'Compare documents', label: 'Compare', detail: 'Line up claims across files.', icon: GitCompare },
+  { mode: 'Extract entities', label: 'Entities', detail: 'Pull people, places, dates, and terms.', icon: Network },
+  { mode: 'Timeline', label: 'Timeline', detail: 'Build event order from your archive.', icon: Clock3 },
 ]
 
+function uniqueByName(items) {
+  const seen = new Set()
+  return items.filter((item) => {
+    const key = `${item.name}:${item.owner_id || 'public'}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 export default function ChatPage() {
-  const { activeCollection, activeModel, setActiveModel } = useStore()
-  const [messages, setMessages] = useState([])
+  const { activeModel, setActiveModel } = useStore()
+  const [collectionId, setCollectionId] = useState('')
+  const [mode, setMode] = useState('Ask')
   const [input, setInput] = useState('')
-  const [streaming, setStreaming] = useState(false)
-  const [recording, setRecording] = useState(false)
-  const [mascotState, setMascotState] = useState('idle')
-  const [selectedSources, setSelectedSources] = useState(null)
-  const [collectionId, setCollectionId] = useState(null)
-  const bottomRef = useRef(null)
-  const inputRef = useRef(null)
-  const abortRef = useRef(null)
-  const mediaRecorderRef = useRef(null)
-  const audioChunksRef = useRef([])
+  const [topK, setTopK] = useState(8)
+  const [temperature, setTemperature] = useState(0.1)
+  const [rerankerEnabled, setRerankerEnabled] = useState(true)
+  const [messages, setMessages] = useState([])
+  const [selected, setSelected] = useState(null)
+  const [loading, setLoading] = useState(false)
 
-  const { data: collectionsData } = useQuery({
-    queryKey: ['collections'],
-    queryFn: listCollections,
-  })
-  const collections = collectionsData?.collections || []
+  const { data: collectionsData } = useQuery({ queryKey: ['collections'], queryFn: listCollections })
+  const { data: modelsData } = useQuery({ queryKey: ['models'], queryFn: listModels })
+  const collections = useMemo(() => uniqueByName(collectionsData?.collections || []), [collectionsData])
+  const models = modelsData?.llm_models || modelsData?.models || ['llama3', 'mistral', 'phi3']
 
-  const { data: modelsData } = useQuery({
-    queryKey: ['models'],
-    queryFn: listModels,
-  })
-  const models = modelsData?.models || ['llama3']
-
-  useEffect(() => {
-    if (!collectionId && collections.length > 0) {
-      setCollectionId(collections[0].id)
-    }
-  }, [collections])
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
-
-  const sendMessage = useCallback(
-    async (text) => {
-      const query = (text || input).trim()
-      if (!query || streaming) return
-      setInput('')
-
-      const userMsgId = newId()
-      const aiMsgId = newId()
-
-      setMessages((prev) => [
-        ...prev,
-        { id: userMsgId, role: 'user', content: query },
-        { id: aiMsgId, role: 'assistant', content: '', sources: [], streaming: true },
-      ])
-      setStreaming(true)
-      setMascotState('thinking')
-
-      let fullContent = ''
-
-      const abort = streamQuery(
-        {
-          query,
-          collection_id: collectionId,
-          model: activeModel,
-          stream: true,
-        },
-        (token) => {
-          fullContent += token
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiMsgId ? { ...m, content: fullContent } : m
-            )
-          )
-        },
-        (sources) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiMsgId ? { ...m, sources } : m
-            )
-          )
-        },
-        (queryId) => {
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiMsgId ? { ...m, streaming: false, queryId } : m
-            )
-          )
-          setStreaming(false)
-          setMascotState('success')
-          setTimeout(() => setMascotState('idle'), 3000)
-        },
-        (err) => {
-          console.error(err)
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === aiMsgId
-                ? { ...m, content: '❌ Error reaching the AI. Is Ollama running?', streaming: false }
-                : m
-            )
-          )
-          setStreaming(false)
-          setMascotState('error')
-          setTimeout(() => setMascotState('idle'), 3000)
-        }
-      )
-      abortRef.current = abort
-    },
-    [input, streaming, collectionId, activeModel]
-  )
-
-  const handleKeyDown = (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
-
-  const clearChat = () => {
-    if (streaming && abortRef.current) abortRef.current()
-    setMessages([])
-    setStreaming(false)
-    setMascotState('idle')
-  }
-
-  const startRecording = async () => {
+  const send = async () => {
+    const query = input.trim()
+    if (!query || loading) return
+    setLoading(true)
+    setInput('')
+    setMessages((current) => [...current, { role: 'user', content: query }])
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-      mediaRecorderRef.current = new MediaRecorder(stream)
-      audioChunksRef.current = []
-      mediaRecorderRef.current.ondataavailable = (e) => {
-        audioChunksRef.current.push(e.data)
-      }
-      mediaRecorderRef.current.onstop = async () => {
-        const blob = new Blob(audioChunksRef.current, { type: 'audio/wav' })
-        try {
-          const { text } = await transcribeAudio(blob)
-          setInput((prev) => prev + text)
-          toast.success('Voice transcribed!')
-        } catch (err) {
-          toast.error('Transcription failed')
-        }
-        setRecording(false)
-        setMascotState('idle')
-        stream.getTracks().forEach(track => track.stop())
-      }
-      mediaRecorderRef.current.start()
-      setRecording(true)
-      setMascotState('listening')
-    } catch (err) {
-      toast.error('Microphone access denied')
+      const result = await queryKB({
+        query,
+        collection_id: collectionId || undefined,
+        model: activeModel,
+        top_k: topK,
+        temperature,
+        reranker_enabled: rerankerEnabled,
+        mode,
+      })
+      setMessages((current) => [...current, { role: 'assistant', ...result }])
+      setSelected(result)
+    } catch (error) {
+      setMessages((current) => [...current, { role: 'assistant', answer: error.response?.data?.detail || 'Local query failed.' }])
+    } finally {
+      setLoading(false)
     }
   }
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop()
-    }
-  }
-
-  const copyMsg = (content) => {
-    navigator.clipboard.writeText(content)
-    toast.success('Copied!')
-  }
-
-  const speakMsg = (content) => {
-    const utterance = new SpeechSynthesisUtterance(content)
-    speechSynthesis.speak(utterance)
-  }
-
-  const handleFeedback = async (queryId, rating) => {
-    if (!queryId) return
-    try {
-      await submitFeedback(queryId, rating)
-      toast.success(rating >= 4 ? 'Great, thanks! 👍' : 'Thanks for the feedback!')
-    } catch { }
-  }
+  const currentInspection = selected?.retrieval?.reranked || selected?.citations || []
 
   return (
-    <div className="flex h-full">
-      {/* Chat area */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Chat toolbar */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b shrink-0"
-          style={{ borderColor: 'var(--border)' }}>
-          {/* Collection picker */}
-          <div className="relative">
-            <select
-              value={collectionId || ''}
-              onChange={(e) => setCollectionId(e.target.value)}
-              className="rag-input py-1.5 pr-8 text-sm w-44 appearance-none cursor-pointer"
-            >
-              {collections.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none opacity-50" />
+    <div className="chat-shell">
+      <section className="flex min-w-0 flex-col" style={{ borderRight: '1px solid var(--border)' }}>
+        <div className="flex flex-wrap items-center gap-3 px-5 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <select className="field w-52" value={collectionId} onChange={(event) => setCollectionId(event.target.value)} title="Collection">
+            <option value="">All collections</option>
+            {collections.map((collection) => <option key={collection.id} value={collection.id}>{collection.name}</option>)}
+          </select>
+          <select className="field w-44" value={activeModel} onChange={(event) => setActiveModel(event.target.value)} title="Local model">
+            {models.map((model) => <option key={model} value={model}>{model}</option>)}
+          </select>
+          <select className="field w-52" value={mode} onChange={(event) => setMode(event.target.value)} title="Query mode">
+            {queryModes.map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+          <div className="ml-auto hidden items-center gap-2 lg:flex">
+            <span className="badge badge-green"><ShieldCheck size={12} /> strict citations</span>
+            <span className="badge badge-cyan"><ListChecks size={12} /> source audit</span>
           </div>
+        </div>
 
-          <ModelSelector models={models} value={activeModel} onChange={setActiveModel} />
+        <div className="flex-1 overflow-auto p-5">
+          <div className="mx-auto max-w-4xl space-y-5">
+            {!messages.length && (
+              <div className="hero-panel chat-empty-panel panel">
+                <div className="relative z-[1] mb-4 flex items-start gap-4">
+                  <div className="brand-mark grid h-11 w-11 shrink-0 place-items-center rounded-xl">
+                    <Brain size={22} />
+                  </div>
+                  <div>
+                    <h1 className="page-title text-xl">Ask the local knowledge base</h1>
+                    <p className="mt-1 max-w-2xl text-sm leading-6 soft">
+                      Source-grounded answers with citations, scores, timing, and provenance.
+                    </p>
+                  </div>
+                </div>
+                <div className="relative z-[1] grid grid-cols-2 gap-3">
+                  {modeCards.map(({ mode: cardMode, label, detail, icon: Icon }) => (
+                    <button key={cardMode} className="mode-card" onClick={() => { setMode(cardMode); setInput(`${cardMode}: `) }}>
+                      <span className="mode-icon"><Icon size={17} /></span>
+                      <span>
+                        <span className="block font-black">{label}</span>
+                        <span className="mt-1 block text-xs soft">{detail}</span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          <div className="ml-auto flex items-center gap-2">
-            {messages.length > 0 && (
-              <button
-                onClick={clearChat}
-                className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold border-2 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors text-red-400 border-red-200 dark:border-red-900"
-              >
-                <Trash2 size={13} /> Clear
-              </button>
+            {messages.map((message, index) => (
+              <div key={index} className={message.role === 'user' ? 'ml-auto max-w-2xl rounded-xl p-4 text-white' : 'panel p-4'} style={message.role === 'user' ? { background: 'var(--accent)' } : undefined}>
+                {message.role === 'user' ? (
+                  <p>{message.content}</p>
+                ) : (
+                  <>
+                    <div className="prose max-w-none text-sm" style={{ color: 'var(--text)' }}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.answer || message.content}</ReactMarkdown>
+                    </div>
+                    {!!message.citations?.length && (
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {message.citations.map((citation) => (
+                          <button key={citation.chunk_id} className="badge badge-cyan" onClick={() => setSelected(message)}>
+                            {citation.filename} {citation.page ? `p.${citation.page}` : citation.timestamp || `chunk ${citation.chunk_index}`}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            ))}
+            {loading && (
+              <div className="subtle-panel max-w-lg p-4">
+                <div className="scan-line mb-3" />
+                <div className="mono text-sm" style={{ color: 'var(--accent-strong)' }}>Retrieving, reranking, and prompting the local model...</div>
+              </div>
             )}
           </div>
         </div>
 
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 space-y-5">
-          {messages.length === 0 && (
-            <div className="flex flex-col items-center justify-center h-full gap-8">
-              {/* Mascot */}
-              <MascotChat state={mascotState} visible={true} message="Ask me anything about your docs! 🧠" />
-
-              {/* Suggested prompts */}
-              <div className="w-full max-w-xl">
-                <p className="text-center text-xs font-bold mb-3 opacity-50 uppercase tracking-wider">
-                  Suggested Queries
-                </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {SUGGESTED.map((s) => (
-                    <motion.button
-                      key={s}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.97 }}
-                      onClick={() => sendMessage(s)}
-                      className="card-cartoon p-3 text-left text-sm font-semibold flex items-start gap-2"
-                    >
-                      <Sparkles size={14} className="mt-0.5 text-purple-400 shrink-0" />
-                      {s}
-                    </motion.button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          <AnimatePresence initial={false}>
-            {messages.map((msg) => (
-              <motion.div
-                key={msg.id}
-                initial={{ opacity: 0, y: 15, scale: 0.97 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                transition={{ type: 'spring', stiffness: 300, damping: 25 }}
-                className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
-                {msg.role === 'assistant' && (
-                  <div className="w-8 h-8 rounded-2xl shrink-0 flex items-center justify-center text-sm mt-1 bg-accent text-white">
-                    🧠
-                  </div>
-                )}
-
-                <div className={`max-w-[75%] space-y-2`}>
-                  <div className={clsx(
-                    'px-4 py-3 text-sm',
-                    msg.role === 'user' ? 'bubble-user font-semibold' : 'bubble-ai'
-                  )}>
-                    {msg.role === 'user' ? (
-                      <p>{msg.content}</p>
-                    ) : (
-                      <>
-                        {msg.content ? (
-                          <div className="prose-rag">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {msg.content}
-                            </ReactMarkdown>
-                            {msg.streaming && <span className="typing-cursor" />}
-                          </div>
-                        ) : (
-                          <TypingIndicator />
-                        )}
-                      </>
-                    )}
-                  </div>
-
-                  {/* Sources */}
-                  {msg.role === 'assistant' && msg.sources?.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {msg.sources.map((src, i) => (
-                        <button
-                          key={i}
-                          onClick={() => setSelectedSources(msg.sources)}
-                          className="source-badge"
-                        >
-                          📄 {src.filename || `Source ${src.index}`}
-                          {src.page > 0 && <span className="opacity-70">p.{src.page}</span>}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Actions */}
-                  {msg.role === 'assistant' && !msg.streaming && msg.content && (
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => speakMsg(msg.content)}
-                        className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-white/10 transition-colors opacity-60 hover:opacity-100">
-                        <Volume2 size={13} />
-                      </button>
-                      <button onClick={() => copyMsg(msg.content)}
-                        className="p-1.5 rounded-lg hover:bg-purple-100 dark:hover:bg-white/10 transition-colors opacity-60 hover:opacity-100">
-                        <Copy size={13} />
-                      </button>
-                      {msg.queryId && (
-                        <>
-                          <button
-                            onClick={() => handleFeedback(msg.queryId, 5)}
-                            className="p-1.5 rounded-lg hover:bg-green-100 dark:hover:bg-green-900/20 transition-colors opacity-60 hover:opacity-100 text-green-500">
-                            <ThumbsUp size={13} />
-                          </button>
-                          <button
-                            onClick={() => handleFeedback(msg.queryId, 1)}
-                            className="p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/20 transition-colors opacity-60 hover:opacity-100 text-red-400">
-                            <ThumbsDown size={13} />
-                          </button>
-                        </>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {msg.role === 'user' && (
-                  <div className="w-8 h-8 rounded-2xl shrink-0 flex items-center justify-center text-sm font-bold text-white bg-accent mt-1">
-                    U
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </AnimatePresence>
-
-          {/* Mascot during streaming */}
-          {streaming && (
-            <div className="flex justify-center">
-              <MascotChat state="thinking" visible={true} />
-            </div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-
-        {/* Input area */}
-        <div className="px-4 pb-5 pt-3 border-t shrink-0" style={{ borderColor: 'var(--border)' }}>
-          <div className="flex gap-3 items-end max-w-4xl mx-auto">
-            <div className="flex-1 relative">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask anything about your documents… (Enter to send, Shift+Enter for newline)"
-                rows={1}
-                disabled={streaming}
-                className="rag-input resize-none max-h-32 overflow-y-auto pr-12"
-                style={{ minHeight: '48px', paddingTop: '12px', paddingBottom: '12px' }}
-                onInput={(e) => {
-                  e.target.style.height = 'auto'
-                  e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px'
-                }}
-              />
-            </div>
-            <motion.button
-              onClick={recording ? stopRecording : startRecording}
-              disabled={streaming}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.93 }}
-              className={clsx(
-                "px-4 py-3 shrink-0 rounded-xl border-2 transition-colors",
-                recording
-                  ? "bg-red-500 border-red-500 text-white animate-pulse"
-                  : "border-accent text-accent hover:bg-accent hover:text-white"
-              )}
-            >
-              <Mic size={18} />
-            </motion.button>
-            <motion.button
-              onClick={() => sendMessage()}
-              disabled={!input.trim() || streaming}
-              whileHover={{ scale: 1.05 }}
-              whileTap={{ scale: 0.93 }}
-              className="btn-glow px-5 py-3 shrink-0 disabled:opacity-40"
-            >
-              <Send size={18} />
-            </motion.button>
+        <div className="composer-dock">
+          <div className="composer-meta">
+            <span className="badge badge-green"><LockKeyhole size={12} /> local query</span>
+            <button className="quick-chip" onClick={() => setInput('Find contradictions: ')}>Contradictions</button>
+            <button className="quick-chip" onClick={() => setInput('Search exact sources: ')}>Exact sources</button>
           </div>
-          <p className="text-center text-xs mt-2 opacity-40 font-semibold">
-            Running on {activeModel} · All processing is local · Zero cloud dependency
-          </p>
+          <div className="composer-panel mx-auto max-w-4xl">
+            <textarea
+              className="composer-textarea"
+              placeholder="Ask RAGNAROK anything about your private knowledge base..."
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  send()
+                }
+              }}
+            />
+            <button className="btn-primary h-[44px] px-5" onClick={send} disabled={loading || !input.trim()}><Send size={18} /></button>
+          </div>
         </div>
-      </div>
+      </section>
 
-      {/* Source panel */}
-      <SourcePanel sources={selectedSources} onClose={() => setSelectedSources(null)} />
+      <aside className="inspector-pane flex min-h-0 flex-col" style={{ background: 'var(--surface-2)' }}>
+        <div className="p-4" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="flex items-center gap-2 text-lg font-bold"><FileSearch size={18} /> Retrieval Inspector</div>
+          <p className="mt-1 text-xs muted">Scores, citations, latency, and chunk previews after each query.</p>
+        </div>
+        <div className="space-y-4 overflow-auto p-4">
+          <div className="panel p-4">
+            <div className="mb-3 flex items-center gap-2 text-sm font-bold"><SlidersHorizontal size={15} /> Controls</div>
+            <label className="mono text-xs muted">top-k {topK}</label>
+            <input className="w-full" type="range" min="3" max="20" value={topK} onChange={(event) => setTopK(Number(event.target.value))} />
+            <label className="mono mt-3 block text-xs muted">temperature {temperature}</label>
+            <input className="w-full" type="range" min="0" max="1" step="0.1" value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
+            <label className="mt-3 flex items-center justify-between text-sm">
+              <span>Reranker</span>
+              <input type="checkbox" checked={rerankerEnabled} onChange={(event) => setRerankerEnabled(event.target.checked)} />
+            </label>
+          </div>
+
+          {selected ? (
+            <>
+              <div className="grid grid-cols-3 gap-2">
+                <div className="metric"><div className="mono text-[10px] muted">total</div><div className="font-black">{selected.latency?.total_ms || 0}ms</div></div>
+                <div className="metric"><div className="mono text-[10px] muted">retrieval</div><div className="font-black">{selected.latency?.retrieval_ms || 0}ms</div></div>
+                <div className="metric"><div className="mono text-[10px] muted">confidence</div><div className="font-black">{selected.confidence || 0}</div></div>
+              </div>
+              {currentInspection.map((chunk, index) => (
+                <div key={chunk.chunk_id || index} className="panel p-4">
+                  <div className="mb-2 truncate text-sm font-bold">{chunk.filename}</div>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    <span className="badge">sim {chunk.similarity_score}</span>
+                    <span className="badge badge-green">rerank {chunk.reranker_score}</span>
+                    <span className="badge">{chunk.page ? `page ${chunk.page}` : chunk.timestamp || `chunk ${chunk.chunk_index}`}</span>
+                  </div>
+                  <p className="text-xs leading-5 soft">{chunk.chunk_preview || chunk.chunk_text}</p>
+                </div>
+              ))}
+            </>
+          ) : (
+            <div className="panel p-4">
+              <div className="mb-3 flex items-center gap-2 font-bold"><Sparkles size={16} /> Waiting for a mission</div>
+              <p className="text-sm leading-6 soft">Ask a question and this panel becomes the evidence board: top chunks, reranker scores, page refs, and timing.</p>
+            </div>
+          )}
+        </div>
+      </aside>
     </div>
   )
 }

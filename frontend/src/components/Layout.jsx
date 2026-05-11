@@ -1,148 +1,136 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useQuery } from '@tanstack/react-query'
 import {
-  MessageSquare, FileText, Clock, BarChart2,
-  Layers, Settings, LogOut, Menu, X, Sun, Moon,
-  Zap, Brain
+  Activity,
+  BarChart3,
+  Bot,
+  Boxes,
+  Database,
+  FolderKanban,
+  LogOut,
+  MessageSquareText,
+  Moon,
+  Settings,
+  ShieldCheck,
+  Sun,
+  UploadCloud,
 } from 'lucide-react'
-import { useStore } from '../store'
-import MascotIdle from './mascot/MascotIdle'
 import clsx from 'clsx'
+import { getSystemStatus } from '../utils/api'
+import { useStore } from '../store'
+import CursorCompanion from './CursorCompanion'
 
-const NAV_ITEMS = [
-  { to: '/chat',        icon: MessageSquare, label: 'Chat' },
-  { to: '/documents',  icon: FileText,       label: 'Documents' },
-  { to: '/collections',icon: Layers,         label: 'Collections' },
-  { to: '/history',    icon: Clock,          label: 'History' },
-  { to: '/eval',       icon: BarChart2,      label: 'Evaluation' },
-  { to: '/settings',   icon: Settings,       label: 'Settings' },
+const navItems = [
+  { to: '/dashboard', icon: Activity, label: 'Dashboard' },
+  { to: '/ingest', icon: UploadCloud, label: 'Ingest' },
+  { to: '/library', icon: Database, label: 'Library' },
+  { to: '/chat', icon: MessageSquareText, label: 'RAG Chat' },
+  { to: '/collections', icon: FolderKanban, label: 'Collections' },
+  { to: '/evals', icon: BarChart3, label: 'Evals' },
+  { to: '/settings', icon: Settings, label: 'Settings' },
 ]
 
-export default function Layout({ children }) {
-  const { sidebarOpen, toggleSidebar, darkMode, toggleDarkMode, logout, user, focusMode, toggleFocusMode } = useStore()
-  const navigate = useNavigate()
+function HealthDot({ ok }) {
+  return <span className={clsx('h-2.5 w-2.5 rounded-full', ok ? 'bg-emerald-400' : 'bg-rose-400')} />
+}
 
-  const handleLogout = () => { logout(); navigate('/login') }
+export default function Layout({ children }) {
+  const navigate = useNavigate()
+  const { logout, user, darkMode, toggleDarkMode } = useStore()
+  const { data: status } = useQuery({
+    queryKey: ['system-status'],
+    queryFn: getSystemStatus,
+    refetchInterval: 10000,
+  })
+
+  const handleLogout = () => {
+    logout()
+    navigate('/auth')
+  }
+
+  const privacyBadges = (status?.privacy_badges || ['Fully Offline', 'Local LLM', 'Local Vectors', 'No Cloud Calls']).slice(0, 2)
 
   return (
-    <div className="flex h-screen overflow-hidden relative bg-primary-50 dark:bg-primary-900">
-      {/* ── Sidebar ── */}
-      <AnimatePresence>
-        {(sidebarOpen && !focusMode) && (
-          <motion.aside
-            initial={{ x: -280 }}
-            animate={{ x: 0 }}
-            exit={{ x: -280 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="relative z-20 flex flex-col w-64 shrink-0 h-screen overflow-y-auto bg-sidebar border-r border-border"
-          >
-            {/* Logo */}
-            <div className="flex items-center gap-3 px-5 py-5 border-b border-border">
-              <div className="w-10 h-10 rounded-2xl flex items-center justify-center bg-accent text-white">
-                <Brain size={20} />
+    <div className="min-h-screen bg-rag">
+      <aside className="app-sidebar fixed left-0 top-0 z-20 w-64">
+        <div className="flex h-full flex-col">
+          <div className="border-b p-5" style={{ borderColor: 'var(--border)' }}>
+            <div className="flex items-center gap-3">
+              <div className="brand-mark grid h-10 w-10 place-items-center rounded-xl">
+                <Boxes size={20} />
               </div>
               <div>
-                <div className="font-display text-lg font-bold text-primary-900 dark:text-primary-100 leading-none">RAGNAROK</div>
-                <div className="text-xs text-primary-600 dark:text-primary-400 font-medium">Offline AI</div>
+                <div className="text-lg font-black tracking-[0.14em]">RAGNAROK</div>
+                <div className="mono text-[10px] uppercase tracking-[0.08em]" style={{ color: 'var(--accent-strong)' }}>offline RAG</div>
               </div>
             </div>
+          </div>
 
-            {/* Mascot */}
-            <div className="flex justify-center py-4 border-b border-border">
-              <MascotIdle size={90} />
-            </div>
-
-            {/* Nav */}
-            <nav className="flex-1 px-3 py-3 space-y-1">
-              {NAV_ITEMS.map(({ to, icon: Icon, label }) => (
-                <NavLink
-                  key={to}
-                  to={to}
-                  className={({ isActive }) => clsx('nav-item', isActive && 'active')}
-                >
-                  <Icon size={18} />
-                  <span>{label}</span>
-                </NavLink>
+          <div className="border-b p-4" style={{ borderColor: 'var(--border)' }}>
+            <div className="grid gap-2">
+              {privacyBadges.map((badge) => (
+                <div key={badge} className="badge badge-green">
+                  <ShieldCheck size={12} />
+                  {badge}
+                </div>
               ))}
-            </nav>
+            </div>
+          </div>
 
-            {/* Bottom */}
-            <div className="px-3 pb-4 space-y-1 border-t border-border pt-3">
-              <div className="flex items-center gap-3 px-3 py-2 rounded-xl bg-secondary">
-                <div className="w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold text-white bg-accent">
-                  {(user?.username?.[0] || 'G').toUpperCase()}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-bold text-primary-900 dark:text-primary-100 truncate">{user?.username || 'Guest'}</div>
-                  <div className="text-xs text-primary-600 dark:text-primary-400">{user?.role || 'user'}</div>
-                </div>
+          <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+            {navItems.map(({ to, icon: Icon, label }) => (
+              <NavLink key={to} to={to} className={({ isActive }) => clsx('nav-ops', isActive && 'active')}>
+                <Icon size={17} />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </nav>
+
+          <div className="sidebar-footer border-t p-4" style={{ borderColor: 'var(--border)' }}>
+            <div className="subtle-panel mb-3 p-3">
+              <div className="mb-2 flex items-center justify-between mono text-[11px] uppercase muted">
+                <span>Runtime</span>
+                <Bot size={14} />
               </div>
-
-              <button
-                onClick={toggleDarkMode}
-                className="nav-item w-full"
-              >
-                {darkMode ? <Sun size={18} /> : <Moon size={18} />}
-                <span>{darkMode ? 'Light Mode' : 'Dark Mode'}</span>
-              </button>
-
-              <button onClick={handleLogout} className="nav-item w-full text-red-600 hover:text-red-700">
-                <LogOut size={18} />
-                <span>Logout</span>
+              <div className="grid grid-cols-3 gap-2 text-xs soft">
+                <div className="flex items-center justify-center gap-1"><HealthDot ok={status?.ollama?.available} /><span>LLM</span></div>
+                <div className="flex items-center justify-center gap-1"><HealthDot ok={status?.embedding_model?.available} /><span>Emb</span></div>
+                <div className="flex items-center justify-center gap-1"><HealthDot ok={status?.chromadb?.available || status?.chromadb?.chunk_count >= 0} /><span>Vec</span></div>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="grid h-9 w-9 place-items-center rounded-xl font-bold text-white" style={{ background: 'var(--accent)' }}>
+                {(user?.username?.[0] || 'A').toUpperCase()}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{user?.username || 'admin'}</div>
+                <div className="mono text-[11px] muted">local session</div>
+              </div>
+              <button onClick={handleLogout} className="icon-button" title="Logout">
+                <LogOut size={17} />
               </button>
             </div>
-          </motion.aside>
-        )}
-      </AnimatePresence>
-
-      {/* ── Main ── */}
-      <div className="flex-1 flex flex-col min-w-0 relative z-10">
-        {/* Topbar */}
-        <header className="flex items-center gap-3 px-5 py-3 border-b border-border bg-card shrink-0">
-          <button
-            onClick={toggleSidebar}
-            className="p-2 rounded-xl hover:bg-secondary transition-colors"
-            title={sidebarOpen ? 'Close sidebar' : 'Open sidebar'}
-          >
-            {sidebarOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-
-          <div className="flex items-center gap-2">
-            <Zap size={16} className="text-yellow-500" />
-            <span className="text-sm font-medium text-secondary">
-              Fully Offline · Multimodal · Private
-            </span>
           </div>
+        </div>
+      </aside>
 
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={toggleFocusMode}
-              className="p-2 rounded-xl hover:bg-secondary transition-colors"
-              title={focusMode ? 'Exit focus mode' : 'Enter focus mode'}
-            >
-              {focusMode ? <Menu size={18} /> : <Zap size={18} />}
-            </button>
-            <button
-              onClick={toggleDarkMode}
-              className="p-2 rounded-xl hover:bg-secondary transition-colors"
-            >
-              {darkMode ? <Sun size={18} className="text-yellow-500" /> : <Moon size={18} />}
+      <main className="ml-64 min-h-screen">
+        <div className="app-topbar sticky top-0 z-10 flex h-14 items-center justify-between px-6">
+          <div className="mono text-xs uppercase tracking-[0.16em]">
+            Private local multimodal RAG
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="badge">LLM <b>{status?.selected_llm || 'llama3'}</b></span>
+            <span className="badge">Chunks <b>{status?.chromadb?.chunk_count ?? 0}</b></span>
+            <button onClick={toggleDarkMode} className="btn-secondary py-2" title={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}>
+              {darkMode ? <Sun size={16} /> : <Moon size={16} />}
+              {darkMode ? 'Light' : 'Dark'}
             </button>
           </div>
-        </header>
-
-        {/* Page content */}
-        <motion.main
-          key={window.location.pathname}
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -10 }}
-          transition={{ duration: 0.3 }}
-          className="flex-1 overflow-auto relative"
-        >
-          {children}
-        </motion.main>
-      </div>
+        </div>
+        {children}
+      </main>
+      <CursorCompanion />
     </div>
   )
 }
