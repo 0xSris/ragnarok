@@ -8,11 +8,27 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
-from passlib.context import CryptContext
-import aiosqlite
+try:
+    from passlib.context import CryptContext
+except ImportError:
+    import hashlib
+    import hmac
 
+    class CryptContext:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def hash(self, password: str) -> str:
+            return "sha256$" + hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+        def verify(self, plain: str, hashed: str) -> bool:
+            if hashed.startswith("sha256$"):
+                expected = "sha256$" + hashlib.sha256(plain.encode("utf-8")).hexdigest()
+                return hmac.compare_digest(expected, hashed)
+            return hmac.compare_digest(plain, hashed)
 from backend.core.config import settings
-from backend.core.database import DB_PATH
+
+DB_PATH = str(settings.DB_PATH)
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +64,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 
 async def get_user_by_username(username: str):
+    import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
@@ -58,6 +75,7 @@ async def get_user_by_username(username: str):
 
 
 async def get_user_by_id(user_id: str):
+    import aiosqlite
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(

@@ -17,6 +17,7 @@ from backend.api.history import router as history_router
 from backend.api.eval import router as eval_router
 from backend.api.export import router as export_router
 from backend.api.collections import router as collections_router
+from backend.api.system import router as system_router
 from backend.core.config import settings
 from backend.core.database import init_db
 from backend.core.vector_store import VectorStore
@@ -61,11 +62,13 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
 app.include_router(docs_router, prefix="/api/documents", tags=["documents"])
+app.include_router(docs_router, prefix="/api/ingest", tags=["ingest"])
 app.include_router(query_router, prefix="/api/query", tags=["query"])
 app.include_router(history_router, prefix="/api/history", tags=["history"])
 app.include_router(eval_router, prefix="/api/eval", tags=["evaluation"])
 app.include_router(export_router, prefix="/api/export", tags=["export"])
 app.include_router(collections_router, prefix="/api/collections", tags=["collections"])
+app.include_router(system_router, prefix="/api", tags=["system"])
 
 
 @app.get("/api/health")

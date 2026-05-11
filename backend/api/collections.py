@@ -21,11 +21,28 @@ async def list_collections(current_user=Depends(get_current_user)):
     async with aiosqlite.connect(DB_PATH) as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
-            SELECT c.*, COUNT(d.id) as doc_count
-            FROM collections c
-            LEFT JOIN documents d ON d.collection_id = c.id
-            WHERE c.owner_id = ? OR c.is_public = 1
-            GROUP BY c.id ORDER BY c.created_at DESC
+            WITH visible AS (
+                SELECT c.*
+                FROM collections c
+                WHERE c.owner_id = ? OR c.is_public = 1
+            ),
+            deduped AS (
+                SELECT *
+                FROM visible v
+                WHERE v.id = (
+                    SELECT v2.id
+                    FROM visible v2
+                    WHERE LOWER(v2.name) = LOWER(v.name)
+                      AND COALESCE(v2.owner_id, 'public') = COALESCE(v.owner_id, 'public')
+                    ORDER BY v2.created_at ASC, v2.id ASC
+                    LIMIT 1
+                )
+            )
+            SELECT d.*, COUNT(doc.id) as doc_count
+            FROM deduped d
+            LEFT JOIN documents doc ON doc.collection_id = d.id
+            GROUP BY d.id
+            ORDER BY d.created_at DESC
         """, (current_user["id"],)) as cur:
             rows = [dict(r) for r in await cur.fetchall()]
     return {"collections": rows}

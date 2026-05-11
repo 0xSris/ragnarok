@@ -64,6 +64,55 @@ async def init_db():
                 FOREIGN KEY (owner_id) REFERENCES users(id)
             );
 
+            CREATE TABLE IF NOT EXISTS ingestion_jobs (
+                id TEXT PRIMARY KEY,
+                document_id TEXT,
+                owner_id TEXT,
+                filename TEXT NOT NULL,
+                file_type TEXT,
+                status TEXT DEFAULT 'received',
+                stage TEXT DEFAULT 'received',
+                progress INTEGER DEFAULT 5,
+                stages TEXT DEFAULT '[]',
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (document_id) REFERENCES documents(id),
+                FOREIGN KEY (owner_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                collection_id TEXT,
+                owner_id TEXT,
+                chunk_index INTEGER,
+                text TEXT NOT NULL,
+                page INTEGER DEFAULT 0,
+                timestamp TEXT,
+                similarity_score REAL DEFAULT 0,
+                reranker_score REAL DEFAULT 0,
+                metadata TEXT DEFAULT '{}',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (document_id) REFERENCES documents(id),
+                FOREIGN KEY (collection_id) REFERENCES collections(id),
+                FOREIGN KEY (owner_id) REFERENCES users(id)
+            );
+
+            CREATE TABLE IF NOT EXISTS app_settings (
+                user_id TEXT PRIMARY KEY,
+                selected_llm TEXT DEFAULT 'llama3',
+                embedding_model TEXT DEFAULT 'all-MiniLM-L6-v2',
+                top_k INTEGER DEFAULT 10,
+                chunk_size INTEGER DEFAULT 512,
+                chunk_overlap INTEGER DEFAULT 64,
+                reranker_enabled INTEGER DEFAULT 1,
+                temperature REAL DEFAULT 0.1,
+                citation_strictness TEXT DEFAULT 'strict',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            );
+
             CREATE TABLE IF NOT EXISTS query_history (
                 id TEXT PRIMARY KEY,
                 user_id TEXT,
@@ -94,6 +143,9 @@ async def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_docs_owner ON documents(owner_id);
             CREATE INDEX IF NOT EXISTS idx_docs_collection ON documents(collection_id);
+            CREATE INDEX IF NOT EXISTS idx_jobs_owner ON ingestion_jobs(owner_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id);
+            CREATE INDEX IF NOT EXISTS idx_chunks_collection ON chunks(collection_id);
             CREATE INDEX IF NOT EXISTS idx_history_user ON query_history(user_id);
             CREATE INDEX IF NOT EXISTS idx_history_created ON query_history(created_at);
         """)
@@ -113,12 +165,17 @@ async def init_db():
             VALUES (?, 'admin', 'admin@ragnarok.local', ?, 'admin')
         """, (admin_id, hashed))
 
-        # Create default collection
-        col_id = str(uuid.uuid4())
-        await db.execute("""
-            INSERT OR IGNORE INTO collections (id, name, description, is_public)
-            VALUES (?, 'Default', 'Default document collection', 1)
-        """, (col_id,))
+        # Create one public default collection. Older builds used random ids,
+        # so check by name instead of relying on INSERT OR IGNORE.
+        async with db.execute(
+            "SELECT id FROM collections WHERE name='Default' AND is_public=1 LIMIT 1"
+        ) as cur:
+            default_collection = await cur.fetchone()
+        if not default_collection:
+            await db.execute("""
+                INSERT INTO collections (id, name, description, is_public)
+                VALUES (?, 'Default', 'Default document collection', 1)
+            """, ("default",))
         await db.commit()
 
         logger.info("✅ Database initialized")

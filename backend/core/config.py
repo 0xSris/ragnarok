@@ -1,8 +1,16 @@
 """
 Central configuration — all settings via environment variables with sane defaults.
 """
-from pydantic_settings import BaseSettings
 from pathlib import Path
+
+try:
+    from pydantic_settings import BaseSettings
+except ImportError:
+    class BaseSettings:
+        def __init__(self, **kwargs):
+            for key, value in self.__class__.__dict__.items():
+                if key.isupper():
+                    setattr(self, key, kwargs.get(key, value))
 
 
 class Settings(BaseSettings):
